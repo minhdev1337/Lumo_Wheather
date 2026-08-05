@@ -1,0 +1,6 @@
+Flask
+opencv-python-headless
+requests
+google-genai
+paramiko
+numpy
