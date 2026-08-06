@@ -133,20 +133,26 @@ def capture_frame_via_vlc():
     if os.path.exists(SNAPSHOT_FILE):
         os.remove(SNAPSHOT_FILE)
 
-    # Thêm --vout=dummy để chạy ẩn không cần màn hình trên Linux (headless)
-    vlc_instance = vlc.Instance(":--rtsp-transport=tcp", ":--network-caching=3000", ":--vout=dummy")
+    # ĐÃ SỬA: Chỉ khởi tạo instance với cờ ẩn màn hình, tắt loa và tắt log rác
+    vlc_instance = vlc.Instance("--vout=dummy", "--aout=dummy", "--quiet")
     player = vlc_instance.media_player_new()
     media = vlc_instance.media_new(RTSP_URL)
+    
+    # ĐÃ SỬA: Gắn trực tiếp tùy chọn vào media để tránh lỗi satip và PulseAudio
+    media.add_option(":rtsp-tcp")
+    media.add_option(":network-caching=5000") # Tăng đệm mạng lên 5 giây
+    media.add_option(":no-audio")             # Bỏ qua âm thanh
+    
     player.set_media(media)
 
     player.play()
-    time.sleep(5) # Chờ đệm luồng mạng qua FRP
+    time.sleep(8) # Tăng thời gian chờ lên một chút cho máy chủ Ubuntu đệm mạng
 
     success = False
     if player.is_playing():
         for _ in range(5):
             player.video_take_snapshot(0, SNAPSHOT_FILE, 0, 0)
-            time.sleep(1)
+            time.sleep(1.5)
             if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
                 success = True
                 break
@@ -162,13 +168,23 @@ def capture_frame_via_vlc():
 # LUỒNG XỬ LÝ TRUNG TÂM
 # ==========================================
 def main():
+    # ĐÃ SỬA: Tạo ngay file dự phòng ở đầu chương trình để GitHub không bị lỗi 128
+    fallback_data = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "level": 1,
+        "status": "Mất kết nối Camera hoặc luồng đệm quá chậm. Đang chờ quét lại vào chu kỳ sau.",
+        "image_b64": ""
+    }
+    with open("data.json", "w", encoding="utf-8") as f:
+        json.dump(fallback_data, f, ensure_ascii=False, indent=4)
+
     alert_level = 1
     alert_msg = "Trời quang mây tạnh."
     
     # Lấy khung hình qua nhân VLC thay vì cv2.VideoCapture thông thường
     frame = capture_frame_via_vlc()
     if frame is None:
-        print("Không thể kết nối hoặc trích xuất khung hình từ Camera qua VLC.")
+        print("Không thể kết nối hoặc trích xuất khung hình từ Camera qua VLC. Đã xuất báo cáo dự phòng.")
         return
 
     frame = apply_clahe(cv2.resize(frame, (640, 480)))
