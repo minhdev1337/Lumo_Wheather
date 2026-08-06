@@ -48,6 +48,7 @@ def measure_mountain_sharpness(frame):
 def check_remote_radar():
     lightning_warning = False
     api_rain_count = 0
+    
     try:
         url_om = f"https://api.open-meteo.com/v1/forecast?latitude={VT_LAT}&longitude={VT_LON}&current=precipitation,weather_code"
         res_om = requests.get(url_om, timeout=5).json()
@@ -131,38 +132,50 @@ def check_frp_network(rtsp_url, timeout=3):
         print("❌ LỖI MẠNG: Không thể kết nối tới máy chủ FRP.")
         return False
 
-def capture_frame_diagnostic():
-    """Tự động rà soát qua 3 giao thức để lách lỗi Nonmatching transport của Camera"""
+def capture_frame_definitive():
+    """Hàm trích xuất ảnh tối thượng: Khôi phục cấu hình TCP chuẩn mực và thêm bộ đệm file"""
     if os.path.exists(SNAPSHOT_FILE):
         os.remove(SNAPSHOT_FILE)
 
-    print("\n⏳ [Cách 1] Thử nghiệm HTTP Tunneling...")
-    cmd1 = ['ffmpeg', '-y', '-rtsp_transport', 'http', '-timeout', '15000000', '-i', RTSP_URL, '-vframes', '1', '-q:v', '2', SNAPSHOT_FILE]
-    res1 = subprocess.run(cmd1, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    print("⏳ [Phương án 1] Kéo ảnh trực tiếp qua TCP chuẩn...")
+    cmd_standard = [
+        'ffmpeg', '-y',
+        '-rtsp_transport', 'tcp',
+        '-allowed_media_types', 'video',  # Bỏ qua kênh âm thanh (thường gây lỗi luồng)
+        '-timeout', '15000000',           # Chờ kết nối 15 giây
+        '-i', RTSP_URL,
+        '-vframes', '1',
+        '-q:v', '2',
+        SNAPSHOT_FILE
+    ]
+    subprocess.run(cmd_standard, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
-        print("🎉 THÀNH CÔNG (Cách 1): Camera hỗ trợ RTSP over HTTP!")
+        print("🎉 THÀNH CÔNG: Đã trích xuất ảnh trực tiếp từ Camera!")
         return cv2.imread(SNAPSHOT_FILE)
-    print("⚠️ Cách 1 thất bại. Phản hồi từ Camera:")
-    print("   " + "\n   ".join(res1.stderr.decode('utf-8', errors='ignore').split('\n')[-4:]))
 
-    print("\n⏳ [Cách 2] Thử nghiệm TCP siêu tốc (Bỏ qua buffer)...")
-    cmd2 = ['ffmpeg', '-y', '-rtsp_transport', 'tcp', '-probesize', '32', '-analyzeduration', '0', '-timeout', '15000000', '-i', RTSP_URL, '-vframes', '1', '-q:v', '2', SNAPSHOT_FILE]
-    res2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
-        print("🎉 THÀNH CÔNG (Cách 2): Đã chụp được ảnh qua TCP!")
-        return cv2.imread(SNAPSHOT_FILE)
-    print("⚠️ Cách 2 thất bại. Phản hồi từ Camera:")
-    print("   " + "\n   ".join(res2.stderr.decode('utf-8', errors='ignore').split('\n')[-4:]))
-
-    print("\n⏳ [Cách 3] Thử nghiệm ép UDP qua hầm...")
-    cmd3 = ['ffmpeg', '-y', '-rtsp_transport', 'udp', '-timeout', '15000000', '-i', RTSP_URL, '-vframes', '1', '-q:v', '2', SNAPSHOT_FILE]
-    res3 = subprocess.run(cmd3, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
-        print("🎉 THÀNH CÔNG (Cách 3): Đã chụp được ảnh qua UDP!")
-        return cv2.imread(SNAPSHOT_FILE)
-    print("⚠️ Cách 3 thất bại. Phản hồi từ Camera:")
-    print("   " + "\n   ".join(res3.stderr.decode('utf-8', errors='ignore').split('\n')[-4:]))
-
+    print("⚠️ Phương án 1 không thành công. Luồng mạng có thể bị rớt gói Keyframe do FRP.")
+    print("⏳ [Phương án 2] Lưu đệm luồng Video 5 giây vào ổ cứng rồi trích xuất sau...")
+    cmd_dump = [
+        'ffmpeg', '-y',
+        '-rtsp_transport', 'tcp',
+        '-timeout', '15000000',
+        '-i', RTSP_URL,
+        '-t', '5',               # Ghi liên tục 5 giây
+        '-c:v', 'copy',          # Tải luồng RAW, không can thiệp giải mã
+        '-an',
+        'video_dump.ts'
+    ]
+    subprocess.run(cmd_dump, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    
+    if os.path.exists('video_dump.ts') and os.path.getsize('video_dump.ts') > 1024:
+        print("✅ Đã tải xong luồng video dự phòng. Đang trích xuất ảnh...")
+        cmd_extract = ['ffmpeg', '-y', '-i', 'video_dump.ts', '-vframes', '1', '-q:v', '2', SNAPSHOT_FILE]
+        subprocess.run(cmd_extract, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
+            print("🎉 THÀNH CÔNG: Đã lấy được ảnh từ file đệm!")
+            return cv2.imread(SNAPSHOT_FILE)
+    
+    print("❌ Cả 2 phương án đều thất bại. Luồng RTSP qua FRP bị hỏng hoàn toàn.")
     return None
 
 # ==========================================
@@ -184,9 +197,9 @@ def main():
     alert_level = 1
     alert_msg = "Trời quang mây tạnh."
     
-    frame = capture_frame_diagnostic()
+    frame = capture_frame_definitive()
     if frame is None:
-        print("\n❌ TẤT CẢ CÁC PHƯƠNG ÁN ĐỀU THẤT BẠI. Đã xuất JSON dự phòng.")
+        print("\n❌ Không thể trích xuất khung hình. Đã xuất JSON dự phòng.")
         return
 
     frame = apply_clahe(cv2.resize(frame, (640, 480)))
