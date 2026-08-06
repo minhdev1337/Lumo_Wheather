@@ -132,7 +132,7 @@ def capture_frame_via_ffmpeg():
         '-y',
         '-user_agent', 'VLC/3.0.18 LibVLC/3.0.18', 
         '-rtsp_transport', 'tcp',
-        '-stimeout', '15000000',                   
+        '-timeout', '15000000',                   
         '-i', RTSP_URL,
         '-vframes', '1',                           
         '-q:v', '2',                               
