@@ -9,28 +9,34 @@ from google import genai
 from google.genai import types
 
 # ==========================================
-# CẤU HÌNH HỆ THỐNG & API
+# CẤU HÌNH HỆ THỐNG & API KẾT NỐI
 # ==========================================
 RTSP_URL = os.environ.get("RTSP_URL")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-WEATHER_API_KEY = os.environ.get("WEATHER_API_KEY") # API Key của dịch vụ thời tiết (VD: WeatherAPI.com)
 
-# Tọa độ ngọn núi để làm "Kill-Switch" (Cần điều chỉnh x, y, w, h cho khớp thực tế)
+# Tọa độ chính xác: 10°20'14.4"N 107°04'49.4"E
+VT_LAT = "10.3373"
+VT_LON = "107.0804"
+
+# Chìa khóa của 2 API
+WEATHERAPI_KEY = os.environ.get("WEATHERAPI_KEY")
+OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
+
 MOUNTAIN_ROI = (100, 150, 200, 200) 
 
 def send_telegram(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message})
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message}, timeout=5)
+    except:
+        pass 
 
 def ptz_control(action):
-    # Hàm bắn gói tin ONVIF/CGI qua FRPC để điều khiển PTZ
-    # Ví dụ: requests.get("http://frp.freefrp.net:38081/cgi-bin/ptz.cgi?action=" + action)
     pass 
 
 def apply_clahe(image):
-    # Khử lóa sáng trắng bằng không gian màu LAB
     lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
     clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
@@ -38,7 +44,6 @@ def apply_clahe(image):
     return cv2.cvtColor(cv2.merge((cl, a, b)), cv2.COLOR_LAB2BGR)
 
 def measure_mountain_sharpness(frame):
-    # Đo độ nét của ngọn núi bằng phương sai Laplacian
     x, y, w, h = MOUNTAIN_ROI
     roi = frame[y:y+h, x:x+w]
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
@@ -47,33 +52,49 @@ def measure_mountain_sharpness(frame):
     return sharpness, brightness
 
 def check_remote_radar():
-    """
-    Sử dụng API (VD: WeatherAPI) để quét radar sấm sét và áp suất từ xa.
-    Trả về: Có cảnh báo sét gần không, Số lượng API báo mưa.
-    """
     lightning_warning = False
     api_rain_count = 0
     
+    # 1. OPEN-METEO
     try:
-        # Ví dụ gọi WeatherAPI để lấy dữ liệu Nowcast
-        # url = f"http://api.weatherapi.com/v1/current.json?key={WEATHER_API_KEY}&q=Tọa_độ_của_bạn"
-        # data = requests.get(url).json()
-        
-        # Giả lập logic phân tích JSON từ API:
-        # 1. Kiểm tra mã thời tiết (Weather Code) có báo dông sét không
-        # 2. Kiểm tra cảnh báo (Alerts) trong bán kính 10km
-        
-        # Mô phỏng dữ liệu trả về cho logic
-        lightning_warning = True  # Phát hiện sét cách 5km
-        api_rain_count = 2        # 2/3 hệ thống dự báo có mưa
-        
+        url_om = f"https://api.open-meteo.com/v1/forecast?latitude={VT_LAT}&longitude={VT_LON}&current=precipitation,weather_code"
+        res_om = requests.get(url_om, timeout=5).json()
+        if res_om.get("current", {}).get("precipitation", 0) > 0 or res_om.get("current", {}).get("weather_code", 0) >= 51:
+            api_rain_count += 1
+        if res_om.get("current", {}).get("weather_code", 0) in [95, 96, 99]:
+            lightning_warning = True
     except Exception as e:
-        print(f"Lỗi gọi API Thời tiết: {e}")
+        print("Lỗi Open-Meteo:", e)
+
+    # 2. WEATHERAPI
+    try:
+        if WEATHERAPI_KEY:
+            url_wapi = f"http://api.weatherapi.com/v1/current.json?key={WEATHERAPI_KEY}&q={VT_LAT},{VT_LON}"
+            res_wapi = requests.get(url_wapi, timeout=5).json()
+            condition = res_wapi.get("current", {}).get("condition", {}).get("text", "").lower()
+            if "rain" in condition or "drizzle" in condition or "thunder" in condition:
+                api_rain_count += 1
+            if "thunder" in condition:
+                lightning_warning = True
+    except Exception as e:
+        print("Lỗi WeatherAPI:", e)
+
+    # 3. OPENWEATHERMAP
+    try:
+        if OPENWEATHER_API_KEY:
+            url_owm = f"https://api.openweathermap.org/data/2.5/weather?lat={VT_LAT}&lon={VT_LON}&appid={OPENWEATHER_API_KEY}"
+            res_owm = requests.get(url_owm, timeout=5).json()
+            weather_id = res_owm.get("weather", [{}])[0].get("id", 800)
+            if weather_id < 700: 
+                api_rain_count += 1
+            if 200 <= weather_id < 300: 
+                lightning_warning = True
+    except Exception as e:
+        print("Lỗi OpenWeatherMap:", e)
         
     return lightning_warning, api_rain_count
 
 def analyze_sky_with_gemini(image_path):
-    # Cắt ảnh để Gemini không bị nhầm lẫn giữa đỉnh đầu và chân trời
     img = cv2.imread(image_path)
     h, w = img.shape[:2]
     zenith = img[0:int(h/2), :]
@@ -83,23 +104,26 @@ def analyze_sky_with_gemini(image_path):
     cv2.imwrite("horizon.jpg", horizon)
     
     client = genai.Client(api_key=GEMINI_API_KEY)
+    
     prompt = """
-    Tôi có 2 ảnh: Ảnh 1 (Đỉnh trời), Ảnh 2 (Chân trời).
+    Tôi có 2 ảnh bầu trời: Ảnh 1 (Đỉnh trời), Ảnh 2 (Chân trời).
     Kiểm tra:
     1. Có mây vũ tích khổng lồ không?
-    2. Chân trời còn sáng hay đã bị che kín?
-    3. Có 'dải mưa' (rain shafts) phía xa không?
-    Trả lời ngắn gọn trạng thái: QUANG ĐÃNG, MÂY BAY NGANG, hay SẮP MƯA DÔNG.
+    2. Chân trời còn sáng hay đã bị màn mây/mưa che kín?
+    3. Có 'dải mưa' (rain shafts) trút xuống ở phía xa không?
+    Dựa trên quan sát, hãy chốt 1 cụm từ duy nhất: QUANG ĐÃNG, MÂY BAY NGANG, hoặc SẮP MƯA DÔNG.
     """
     try:
+        # Sử dụng đúng tên model theo tài khoản của bạn
         response = client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-3.5-flash-lite',
             contents=[prompt, 
                       types.Part.from_bytes(data=open("zenith.jpg", "rb").read(), mime_type='image/jpeg'), 
                       types.Part.from_bytes(data=open("horizon.jpg", "rb").read(), mime_type='image/jpeg')]
         )
         return response.text.strip().upper()
-    except:
+    except Exception as e:
+        print("Lỗi gọi Gemini:", e)
         return "LỖI AI"
 
 # ==========================================
@@ -109,47 +133,40 @@ def main():
     alert_level = 1
     alert_msg = "Trời quang mây tạnh."
     
-    # 1. Lấy ảnh gốc ngó sân & núi
     cap = cv2.VideoCapture(RTSP_URL)
     ret, frame = cap.read()
     cap.release()
     if not ret:
+        print("Không thể kết nối Camera.")
         return
 
     frame = apply_clahe(cv2.resize(frame, (640, 480)))
     
-    # 2. KIỂM TRA ĐỘT XUẤT (Microclimate - Ngọn núi)
     sharpness, brightness = measure_mountain_sharpness(frame)
     if brightness < 100 and sharpness < 50:
         alert_level = 3
         alert_msg = "CẢNH BÁO ĐỎ (CỤC BỘ): Màn mưa đã che khuất ngọn núi. Mưa cực lớn đang ập tới!"
         send_telegram(alert_msg)
     else:
-        # 3. QUÉT RADAR TỪ XA
         lightning_warning, api_rain = check_remote_radar()
         
-        # Nếu Radar có tín hiệu -> Đánh thức Camera quét trời
         if lightning_warning or api_rain >= 2:
             ptz_control('UP_CENTER')
-            # Lưu ảnh bầu trời (Giả lập)
             cv2.imwrite("sky.jpg", frame) 
             ptz_control('DOWN_DEFAULT')
             
             ai_verdict = analyze_sky_with_gemini("sky.jpg")
             
-            # 4. MA TRẬN QUYẾT ĐỊNH
             if "SẮP MƯA DÔNG" in ai_verdict:
                 alert_level = 3
-                msg_parts = ["CẢNH BÁO ĐỎ: AI phát hiện mây vũ tích!"]
-                if lightning_warning: msg_parts.append("Radar báo có sấm sét quanh khu vực.")
+                msg_parts = [f"CẢNH BÁO ĐỎ: AI phát hiện mây dông! (Đồng thuận API: {api_rain}/3)"]
+                if lightning_warning: msg_parts.append("Đài radar cảnh báo có sấm sét rất gần.")
                 alert_msg = " ".join(msg_parts)
                 send_telegram(alert_msg)
             else:
                 alert_level = 2
-                alert_msg = f"THEO DÕI: Radar cảnh báo sấm sét từ xa, nhưng AI xác nhận chân trời vẫn quang."
-                # Không báo Telegram để tránh spam, chỉ lưu trạng thái lên Web
+                alert_msg = f"THEO DÕI: API báo có biến động ({api_rain}/3 trạm), nhưng AI xác nhận chân trời vẫn đang quang."
 
-    # 5. XUẤT BÁO CÁO LÊN WEB (Chuyển B64)
     _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
     data = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -159,6 +176,7 @@ def main():
     }
     with open("data.json", "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
+    print("Hoàn tất quy trình. Đã xuất JSON.")
 
 if __name__ == "__main__":
     main()
