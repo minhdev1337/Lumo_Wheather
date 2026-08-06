@@ -156,15 +156,15 @@ def capture_frame_vlc_dump():
 
     vlc_cmd = [
         'vlc',
-        '-I', 'dummy',               # Chạy ngầm hoàn toàn
-        '--quiet',                   # Tắt log cảnh báo rác
-        '--rtsp-tcp',                # Bắt buộc kéo qua TCP
-        '--no-audio',                # Tắt Audio tránh lỗi PulseAudio
-        '--network-caching=3000',    # Bộ đệm 3s bù độ trễ FRP
-        '--sout', 'file/ts:dump.ts', # ÉP LƯU RA FILE THAY VÌ XUẤT HÌNH
-        '--run-time=10',             # Ghi đúng 10 giây rồi dừng
-        RTSP_URL,
-        'vlc://quit'                 # Dừng xong tự thoát chương trình
+        '-I', 'dummy',                # Chạy ngầm hoàn toàn
+        '--quiet',                    # Tắt log cảnh báo rác
+        '--no-audio',                 # Tắt Audio tránh lỗi PulseAudio
+        '--sout=file/ts:dump.ts',     # ÉP LƯU RA FILE THAY VÌ XUẤT HÌNH
+        '--run-time=10',              # Ghi đúng 10 giây rồi dừng
+        RTSP_URL,                     # BẮT BUỘC ĐẶT URL TRƯỚC CÁC CỜ DẤU (:)
+        ':rtsp-tcp',                  # ĐÃ SỬA: Đổi -- thành : để áp dụng riêng cho luồng RTSP này
+        ':network-caching=3000',      # ĐÃ SỬA: Bù độ trễ mạng FRP
+        'vlc://quit'                  # Dừng xong tự thoát chương trình
     ]
 
     try:
@@ -175,7 +175,7 @@ def capture_frame_vlc_dump():
     except Exception as e:
         print(f"❌ Lỗi chạy VLC: {e}")
 
-    # Bước Trích Xuất File Cục Bộ (Không lo rớt mạng)
+    # Bước Trích Xuất File Cục Bộ (Bằng OpenCV thay vì bắt luồng trực tiếp)
     if os.path.exists("dump.ts") and os.path.getsize("dump.ts") > 1024:
         print("🎉 Đã lưu thành công video gốc. Bắt đầu trích xuất khung hình...")
         cap = cv2.VideoCapture("dump.ts")
