@@ -12,9 +12,6 @@ from datetime import datetime
 from google import genai
 from google.genai import types
 
-# Ép OpenCV dùng TCP khi mở RTSP ngầm
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|timeout;5000000"
-
 # ==========================================
 # CẤU HÌNH HỆ THỐNG & API KẾT NỐI
 # ==========================================
@@ -51,8 +48,6 @@ def measure_mountain_sharpness(frame):
 def check_remote_radar():
     lightning_warning = False
     api_rain_count = 0
-    
-    # 1. OPEN-METEO
     try:
         url_om = f"https://api.open-meteo.com/v1/forecast?latitude={VT_LAT}&longitude={VT_LON}&current=precipitation,weather_code"
         res_om = requests.get(url_om, timeout=5).json()
@@ -60,10 +55,9 @@ def check_remote_radar():
             api_rain_count += 1
         if res_om.get("current", {}).get("weather_code", 0) in [95, 96, 99]:
             lightning_warning = True
-    except Exception as e:
-        print("Lỗi Open-Meteo:", e)
+    except Exception:
+        pass
 
-    # 2. WEATHERAPI
     try:
         if WEATHERAPI_KEY:
             url_wapi = f"http://api.weatherapi.com/v1/current.json?key={WEATHERAPI_KEY}&q={VT_LAT},{VT_LON}"
@@ -73,10 +67,9 @@ def check_remote_radar():
                 api_rain_count += 1
             if "thunder" in condition:
                 lightning_warning = True
-    except Exception as e:
-        print("Lỗi WeatherAPI:", e)
+    except Exception:
+        pass
 
-    # 3. OPENWEATHERMAP
     try:
         if OPENWEATHER_API_KEY:
             url_owm = f"https://api.openweathermap.org/data/2.5/weather?lat={VT_LAT}&lon={VT_LON}&appid={OPENWEATHER_API_KEY}"
@@ -86,8 +79,8 @@ def check_remote_radar():
                 api_rain_count += 1
             if 200 <= weather_id < 300: 
                 lightning_warning = True
-    except Exception as e:
-        print("Lỗi OpenWeatherMap:", e)
+    except Exception:
+        pass
         
     return lightning_warning, api_rain_count
 
@@ -123,74 +116,52 @@ def analyze_sky_with_gemini(image_path):
         return "LỖI AI"
 
 def check_frp_network(rtsp_url, timeout=3):
-    """Kiểm tra xem máy chủ GitHub có bị FRP chặn IP không"""
     print("⏳ Đang kiểm tra cổng mạng từ GitHub đến FRP...")
     try:
-        if not rtsp_url:
-            print("❌ LỖI: Đường dẫn RTSP_URL trống hoặc không tồn tại.")
-            return False
-            
         parsed = urlparse(rtsp_url.replace("rtsp://", "http://"))
         host = parsed.hostname
         port = parsed.port or 554
-        
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(timeout)
         s.connect((host, port))
         s.close()
         print("✅ Mạng thông suốt! GitHub không bị chặn IP.")
         return True
-    except socket.timeout:
-        print("❌ LỖI MẠNG: Kết nối bị treo! Máy chủ GitHub đã bị chặn IP (Blackholed).")
-        return False
-    except Exception as e:
-        print(f"❌ LỖI MẠNG: Không thể kết nối tới máy chủ Camera ({e})")
+    except:
+        print("❌ LỖI MẠNG: Không thể kết nối tới máy chủ FRP.")
         return False
 
 def capture_frame_diagnostic():
-    """Hàm trích xuất ảnh chẩn đoán: Thử RTSP over HTTP & Native OpenCV"""
+    """Tự động rà soát qua 3 giao thức để lách lỗi Nonmatching transport của Camera"""
     if os.path.exists(SNAPSHOT_FILE):
         os.remove(SNAPSHOT_FILE)
 
-    # CÁCH 1: FFmpeg với RTSP over HTTP (Khắc phục triệt để lỗi Nonmatching transport)
-    print("⏳ [Cách 1] Kéo ảnh qua FFmpeg (Chế độ RTSP-over-HTTP Tunneling)...")
-    cmd_http = [
-        'ffmpeg', '-y',
-        '-rtsp_transport', 'http',
-        '-timeout', '10000000',
-        '-i', RTSP_URL,
-        '-vframes', '1',
-        '-q:v', '2',
-        SNAPSHOT_FILE
-    ]
-    try:
-        res1 = subprocess.run(cmd_http, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
-        if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
-            print("🎉 THÀNH CÔNG: Đã lấy được ảnh qua RTSP-over-HTTP!")
-            return cv2.imread(SNAPSHOT_FILE)
-        else:
-            print("⚠️ Cách 1 thất bại. Log chi tiết:")
-            print(res1.stderr.decode('utf-8', errors='ignore'))
-    except Exception as e:
-        print(f"⚠️ Cách 1 báo lỗi hệ thống: {e}")
+    print("\n⏳ [Cách 1] Thử nghiệm HTTP Tunneling...")
+    cmd1 = ['ffmpeg', '-y', '-rtsp_transport', 'http', '-timeout', '15000000', '-i', RTSP_URL, '-vframes', '1', '-q:v', '2', SNAPSHOT_FILE]
+    res1 = subprocess.run(cmd1, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
+        print("🎉 THÀNH CÔNG (Cách 1): Camera hỗ trợ RTSP over HTTP!")
+        return cv2.imread(SNAPSHOT_FILE)
+    print("⚠️ Cách 1 thất bại. Phản hồi từ Camera:")
+    print("   " + "\n   ".join(res1.stderr.decode('utf-8', errors='ignore').split('\n')[-4:]))
 
-    # CÁCH 2: Dùng OpenCV VideoCapture trực tiếp trong Python
-    print("⏳ [Cách 2] Kéo ảnh trực tiếp bằng OpenCV Native Client...")
-    try:
-        cap = cv2.VideoCapture(RTSP_URL, cv2.CAP_FFMPEG)
-        if cap.isOpened():
-            ret, frame = cap.read()
-            cap.release()
-            if ret and frame is not None:
-                print("🎉 THÀNH CÔNG: Đã lấy được ảnh qua OpenCV Native!")
-                cv2.imwrite(SNAPSHOT_FILE, frame)
-                return frame
-            else:
-                print("⚠️ Cách 2: OpenCV không đọc được frame nào.")
-        else:
-            print("⚠️ Cách 2: OpenCV không thể mở luồng Video.")
-    except Exception as e:
-        print(f"⚠️ Cách 2 báo lỗi: {e}")
+    print("\n⏳ [Cách 2] Thử nghiệm TCP siêu tốc (Bỏ qua buffer)...")
+    cmd2 = ['ffmpeg', '-y', '-rtsp_transport', 'tcp', '-probesize', '32', '-analyzeduration', '0', '-timeout', '15000000', '-i', RTSP_URL, '-vframes', '1', '-q:v', '2', SNAPSHOT_FILE]
+    res2 = subprocess.run(cmd2, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
+        print("🎉 THÀNH CÔNG (Cách 2): Đã chụp được ảnh qua TCP!")
+        return cv2.imread(SNAPSHOT_FILE)
+    print("⚠️ Cách 2 thất bại. Phản hồi từ Camera:")
+    print("   " + "\n   ".join(res2.stderr.decode('utf-8', errors='ignore').split('\n')[-4:]))
+
+    print("\n⏳ [Cách 3] Thử nghiệm ép UDP qua hầm...")
+    cmd3 = ['ffmpeg', '-y', '-rtsp_transport', 'udp', '-timeout', '15000000', '-i', RTSP_URL, '-vframes', '1', '-q:v', '2', SNAPSHOT_FILE]
+    res3 = subprocess.run(cmd3, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
+        print("🎉 THÀNH CÔNG (Cách 3): Đã chụp được ảnh qua UDP!")
+        return cv2.imread(SNAPSHOT_FILE)
+    print("⚠️ Cách 3 thất bại. Phản hồi từ Camera:")
+    print("   " + "\n   ".join(res3.stderr.decode('utf-8', errors='ignore').split('\n')[-4:]))
 
     return None
 
@@ -208,7 +179,6 @@ def main():
         json.dump(fallback_data, f, ensure_ascii=False, indent=4)
 
     if not check_frp_network(RTSP_URL):
-        print("Dừng quy trình vì hệ thống mạng bị nghẽn hoặc bị chặn IP.")
         return
 
     alert_level = 1
@@ -216,7 +186,7 @@ def main():
     
     frame = capture_frame_diagnostic()
     if frame is None:
-        print("❌ Không thể trích xuất khung hình từ Camera. Đã xuất JSON dự phòng.")
+        print("\n❌ TẤT CẢ CÁC PHƯƠNG ÁN ĐỀU THẤT BẠI. Đã xuất JSON dự phòng.")
         return
 
     frame = apply_clahe(cv2.resize(frame, (640, 480)))
