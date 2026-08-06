@@ -146,65 +146,39 @@ def check_frp_network(rtsp_url, timeout=3):
         print(f"❌ LỖI MẠNG: Không thể kết nối tới máy chủ Camera ({e})")
         return False
 
-def capture_frame_robust():
-    """Hàm trích xuất ảnh đa kịch bản (FFmpeg relaxed transport + GStreamer fallback)"""
+def capture_frame_fast():
+    """Trích xuất khung hình siêu tốc qua đường hầm FRP mà không cần nạp đệm video"""
     if os.path.exists(SNAPSHOT_FILE):
         os.remove(SNAPSHOT_FILE)
 
-    # KỊCH BẢN 1: FFmpeg với cờ -rtsp_flags prefer_tcp (Không bị hủy khi gặp lỗi Nonmatching transport)
-    print("⏳ [Phương án 1] Trích xuất bằng FFmpeg (Chế độ linh hoạt Transport)...")
-    cmd_ffmpeg_1 = [
+    print("⏳ Đang kéo khung hình qua FFmpeg (Chế độ Fast-Probe)...")
+    cmd = [
         'ffmpeg', '-y',
-        '-rtsp_flags', 'prefer_tcp',
-        '-user_agent', 'VLC/3.0.18 LibVLC/3.0.18',
-        '-timeout', '15000000',
+        '-rtsp_transport', 'tcp',
+        '-probesize', '32',          # Đọc ngay từ 32 byte đầu
+        '-analyzeduration', '0',     # Bỏ qua phân tích luồng
+        '-fflags', 'nobuffer',       # Tắt bộ nhớ đệm
+        '-flags', 'low_delay',       # Ép độ trễ tối thiểu
+        '-timeout', '10000000',      # Timeout 10 giây (tính bằng microsecond)
         '-i', RTSP_URL,
         '-vframes', '1',
         '-q:v', '2',
         SNAPSHOT_FILE
     ]
-    try:
-        subprocess.run(cmd_ffmpeg_1, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
-        if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
-            print("🎉 THÀNH CÔNG: Đã chụp được ảnh qua FFmpeg (Chế độ 1)!")
-            return cv2.imread(SNAPSHOT_FILE)
-    except Exception as e:
-        print(f"Thử phương án 1 thất bại: {e}")
 
-    # KỊCH BẢN 2: FFmpeg chế độ tự động đàm phán giao thức
-    print("⏳ [Phương án 2] Trích xuất bằng FFmpeg (Chế độ Auto Negotiation)...")
-    cmd_ffmpeg_2 = [
-        'ffmpeg', '-y',
-        '-i', RTSP_URL,
-        '-vframes', '1',
-        '-q:v', '2',
-        SNAPSHOT_FILE
-    ]
     try:
-        subprocess.run(cmd_ffmpeg_2, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+        process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
         if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
-            print("🎉 THÀNH CÔNG: Đã chụp được ảnh qua FFmpeg (Chế độ 2)!")
+            print("🎉 THÀNH CÔNG: Đã trích xuất ảnh từ Camera!")
             return cv2.imread(SNAPSHOT_FILE)
+        else:
+            print("❌ FFmpeg không thể tạo ảnh. Log chi tiết:")
+            print(process.stderr.decode('utf-8', errors='ignore'))
+    except subprocess.TimeoutExpired:
+        print("❌ LỖI: Quá thời gian chờ (Timeout). Băng thông FRP quá chậm hoặc luồng chính nặng quá.")
     except Exception as e:
-        print(f"Thử phương án 2 thất bại: {e}")
+        print(f"❌ LỖI: {e}")
 
-    # KỊCH BẢN 3: GStreamer (Bỏ qua hoàn toàn kiểm tra tiêu đề RTSP transport)
-    print("⏳ [Phương án 3] Trích xuất bằng GStreamer Pipeline...")
-    gst_cmd = [
-        'gst-launch-1.0',
-        'rtspsrc', f'location={RTSP_URL}', 'protocols=tcp', 'latency=2000',
-        '!', 'rtph264depay', '!', 'h264parse', '!', 'avdec_h264',
-        '!', 'videoconvert', '!', 'jpegenc', '!', 'filesink', f'location={SNAPSHOT_FILE}'
-    ]
-    try:
-        subprocess.run(gst_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
-        if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
-            print("🎉 THÀNH CÔNG: Đã chụp được ảnh qua GStreamer!")
-            return cv2.imread(SNAPSHOT_FILE)
-    except Exception as e:
-        print(f"Thử phương án 3 thất bại: {e}")
-
-    print("❌ Tất cả các phương án trích xuất ảnh đều không thành công.")
     return None
 
 # ==========================================
@@ -228,7 +202,7 @@ def main():
     alert_level = 1
     alert_msg = "Trời quang mây tạnh."
     
-    frame = capture_frame_robust()
+    frame = capture_frame_fast()
     if frame is None:
         print("Không thể trích xuất khung hình từ Camera. Đã xuất JSON dự phòng.")
         return
