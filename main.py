@@ -27,7 +27,7 @@ WEATHERAPI_KEY = os.environ.get("WEATHER_API_KEY")
 OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
 
 MOUNTAIN_ROI = (100, 150, 200, 200) 
-SNAPSHOT_FILE = os.path.abspath("openrtsp_snapshot.jpg")
+SNAPSHOT_FILE = os.path.abspath("camera_snapshot.jpg")
 
 def ptz_control(action):
     pass 
@@ -146,51 +146,65 @@ def check_frp_network(rtsp_url, timeout=3):
         print(f"❌ LỖI MẠNG: Không thể kết nối tới máy chủ Camera ({e})")
         return False
 
-def capture_frame_via_openrtsp():
-    """Dùng openRTSP (Live555 Engine) để kéo luồng RTSP TCP vượt qua lỗi Nonmatching transport"""
-    print("⏳ Đang dùng openRTSP (Live555) trích xuất luồng video qua FRP...")
+def capture_frame_robust():
+    """Hàm trích xuất ảnh đa kịch bản (FFmpeg relaxed transport + GStreamer fallback)"""
     if os.path.exists(SNAPSHOT_FILE):
         os.remove(SNAPSHOT_FILE)
-        
-    # Dọn dẹp file đệm video cũ
-    for f in os.listdir('.'):
-        if f.startswith('video-'):
-            try:
-                os.remove(f)
-            except:
-                pass
 
-    # Lệnh openRTSP: -t (ép TCP), -d 7 (chạy 7 giây lấy luồng), -b 5000000 (bộ đệm 5MB)
-    cmd_openrtsp = ['openRTSP', '-t', '-d', '7', '-b', '5000000', RTSP_URL]
-    
+    # KỊCH BẢN 1: FFmpeg với cờ -rtsp_flags prefer_tcp (Không bị hủy khi gặp lỗi Nonmatching transport)
+    print("⏳ [Phương án 1] Trích xuất bằng FFmpeg (Chế độ linh hoạt Transport)...")
+    cmd_ffmpeg_1 = [
+        'ffmpeg', '-y',
+        '-rtsp_flags', 'prefer_tcp',
+        '-user_agent', 'VLC/3.0.18 LibVLC/3.0.18',
+        '-timeout', '15000000',
+        '-i', RTSP_URL,
+        '-vframes', '1',
+        '-q:v', '2',
+        SNAPSHOT_FILE
+    ]
     try:
-        subprocess.run(cmd_openrtsp, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
-        
-        # Tìm file video do openRTSP tải về
-        video_files = [f for f in os.listdir('.') if f.startswith('video-')]
-        
-        if video_files:
-            raw_video = video_files[0]
-            # Dùng FFmpeg chuyển file video thô thành 1 bức ảnh JPEG
-            cmd_ffmpeg = ['ffmpeg', '-y', '-i', raw_video, '-vframes', '1', '-q:v', '2', SNAPSHOT_FILE]
-            subprocess.run(cmd_ffmpeg, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
-            
-            # Xóa file video thô sau khi chuyển đổi xong
-            for f in video_files:
-                try:
-                    os.remove(f)
-                except:
-                    pass
-
-            if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
-                print("🎉 THÀNH CÔNG: Đã trích xuất ảnh từ Camera!")
-                return cv2.imread(SNAPSHOT_FILE)
-        
-        print("❌ openRTSP không bắt được luồng video nào từ Camera.")
-            
+        subprocess.run(cmd_ffmpeg_1, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+        if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
+            print("🎉 THÀNH CÔNG: Đã chụp được ảnh qua FFmpeg (Chế độ 1)!")
+            return cv2.imread(SNAPSHOT_FILE)
     except Exception as e:
-        print(f"❌ LỖI HỆ THỐNG Khi chạy openRTSP: {e}")
-        
+        print(f"Thử phương án 1 thất bại: {e}")
+
+    # KỊCH BẢN 2: FFmpeg chế độ tự động đàm phán giao thức
+    print("⏳ [Phương án 2] Trích xuất bằng FFmpeg (Chế độ Auto Negotiation)...")
+    cmd_ffmpeg_2 = [
+        'ffmpeg', '-y',
+        '-i', RTSP_URL,
+        '-vframes', '1',
+        '-q:v', '2',
+        SNAPSHOT_FILE
+    ]
+    try:
+        subprocess.run(cmd_ffmpeg_2, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+        if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
+            print("🎉 THÀNH CÔNG: Đã chụp được ảnh qua FFmpeg (Chế độ 2)!")
+            return cv2.imread(SNAPSHOT_FILE)
+    except Exception as e:
+        print(f"Thử phương án 2 thất bại: {e}")
+
+    # KỊCH BẢN 3: GStreamer (Bỏ qua hoàn toàn kiểm tra tiêu đề RTSP transport)
+    print("⏳ [Phương án 3] Trích xuất bằng GStreamer Pipeline...")
+    gst_cmd = [
+        'gst-launch-1.0',
+        'rtspsrc', f'location={RTSP_URL}', 'protocols=tcp', 'latency=2000',
+        '!', 'rtph264depay', '!', 'h264parse', '!', 'avdec_h264',
+        '!', 'videoconvert', '!', 'jpegenc', '!', 'filesink', f'location={SNAPSHOT_FILE}'
+    ]
+    try:
+        subprocess.run(gst_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+        if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
+            print("🎉 THÀNH CÔNG: Đã chụp được ảnh qua GStreamer!")
+            return cv2.imread(SNAPSHOT_FILE)
+    except Exception as e:
+        print(f"Thử phương án 3 thất bại: {e}")
+
+    print("❌ Tất cả các phương án trích xuất ảnh đều không thành công.")
     return None
 
 # ==========================================
@@ -214,7 +228,7 @@ def main():
     alert_level = 1
     alert_msg = "Trời quang mây tạnh."
     
-    frame = capture_frame_via_openrtsp()
+    frame = capture_frame_robust()
     if frame is None:
         print("Không thể trích xuất khung hình từ Camera. Đã xuất JSON dự phòng.")
         return
