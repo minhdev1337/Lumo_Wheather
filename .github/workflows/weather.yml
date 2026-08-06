@@ -20,20 +20,10 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Cài đặt thư viện và Tự biên dịch openRTSP từ GitHub Mirror
+      - name: Cài đặt thư viện cần thiết và công cụ Xử lý Video
         run: |
           sudo apt-get update
-          # Cài đặt môi trường biên dịch và FFmpeg
-          sudo apt-get install -y build-essential libssl-dev ffmpeg git
-          # Clone mã nguồn từ GitHub Mirror để né lỗi 404 Not Found
-          git clone https://github.com/rgaufko/live555.git live
-          cd live
-          ./genMakefiles linux
-          make -j4
-          # Chép file thực thi vào hệ thống
-          sudo cp testProgs/openRTSP /usr/local/bin/
-          cd ..
-          # Cài đặt các thư viện Python
+          sudo apt-get install -y ffmpeg gstreamer1.0-tools gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly
           pip install opencv-python-headless requests numpy google-genai
 
       - name: Chạy Trạm Khí Tượng AI
