@@ -146,39 +146,50 @@ def check_frp_network(rtsp_url, timeout=3):
         print(f"❌ LỖI MẠNG: Không thể kết nối tới máy chủ Camera ({e})")
         return False
 
-def capture_frame_fast():
-    """Trích xuất khung hình siêu tốc qua đường hầm FRP mà không cần nạp đệm video"""
-    if os.path.exists(SNAPSHOT_FILE):
-        os.remove(SNAPSHOT_FILE)
+def capture_frame_vlc_dump():
+    """Sử dụng nhân Live555 của VLC tải luồng thô về máy để né kiểm duyệt Transport của FFmpeg"""
+    print("⏳ Dùng VLC (Live555) tải 10 giây luồng thô từ Camera...")
+    
+    # Xóa file cũ nếu có
+    if os.path.exists("dump.ts"): os.remove("dump.ts")
+    if os.path.exists(SNAPSHOT_FILE): os.remove(SNAPSHOT_FILE)
 
-    print("⏳ Đang kéo khung hình qua FFmpeg (Chế độ Fast-Probe)...")
-    cmd = [
-        'ffmpeg', '-y',
-        '-rtsp_transport', 'tcp',
-        '-probesize', '32',          # Đọc ngay từ 32 byte đầu
-        '-analyzeduration', '0',     # Bỏ qua phân tích luồng
-        '-fflags', 'nobuffer',       # Tắt bộ nhớ đệm
-        '-flags', 'low_delay',       # Ép độ trễ tối thiểu
-        '-timeout', '10000000',      # Timeout 10 giây (tính bằng microsecond)
-        '-i', RTSP_URL,
-        '-vframes', '1',
-        '-q:v', '2',
-        SNAPSHOT_FILE
+    vlc_cmd = [
+        'vlc',
+        '-I', 'dummy',               # Chạy ngầm hoàn toàn
+        '--quiet',                   # Tắt log cảnh báo rác
+        '--rtsp-tcp',                # Bắt buộc kéo qua TCP
+        '--no-audio',                # Tắt Audio tránh lỗi PulseAudio
+        '--network-caching=3000',    # Bộ đệm 3s bù độ trễ FRP
+        '--sout', 'file/ts:dump.ts', # ÉP LƯU RA FILE THAY VÌ XUẤT HÌNH
+        '--run-time=10',             # Ghi đúng 10 giây rồi dừng
+        RTSP_URL,
+        'vlc://quit'                 # Dừng xong tự thoát chương trình
     ]
 
     try:
-        process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
-        if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
-            print("🎉 THÀNH CÔNG: Đã trích xuất ảnh từ Camera!")
-            return cv2.imread(SNAPSHOT_FILE)
-        else:
-            print("❌ FFmpeg không thể tạo ảnh. Log chi tiết:")
-            print(process.stderr.decode('utf-8', errors='ignore'))
+        # Cấp 25 giây cho toàn bộ tiến trình tải (bù trừ hao mạng)
+        subprocess.run(vlc_cmd, timeout=25)
     except subprocess.TimeoutExpired:
-        print("❌ LỖI: Quá thời gian chờ (Timeout). Băng thông FRP quá chậm hoặc luồng chính nặng quá.")
+        print("⏳ VLC đã tải đủ dữ liệu và bị ép thoát do chạm mốc thời gian.")
     except Exception as e:
-        print(f"❌ LỖI: {e}")
+        print(f"❌ Lỗi chạy VLC: {e}")
 
+    # Bước Trích Xuất File Cục Bộ (Không lo rớt mạng)
+    if os.path.exists("dump.ts") and os.path.getsize("dump.ts") > 1024:
+        print("🎉 Đã lưu thành công video gốc. Bắt đầu trích xuất khung hình...")
+        cap = cv2.VideoCapture("dump.ts")
+        ret, frame = cap.read()
+        cap.release()
+        
+        if ret and frame is not None:
+            cv2.imwrite(SNAPSHOT_FILE, frame)
+            return frame
+        else:
+            print("❌ File dump.ts được tải về nhưng không chứa khung hình video.")
+    else:
+        print("❌ Quá trình tải luồng video thất bại. Không có file nào được lưu.")
+        
     return None
 
 # ==========================================
@@ -202,7 +213,8 @@ def main():
     alert_level = 1
     alert_msg = "Trời quang mây tạnh."
     
-    frame = capture_frame_fast()
+    # Kéo luồng qua VLC File Dump
+    frame = capture_frame_vlc_dump()
     if frame is None:
         print("Không thể trích xuất khung hình từ Camera. Đã xuất JSON dự phòng.")
         return
