@@ -27,7 +27,7 @@ WEATHERAPI_KEY = os.environ.get("WEATHER_API_KEY")
 OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
 
 MOUNTAIN_ROI = (100, 150, 200, 200) 
-SNAPSHOT_FILE = os.path.abspath("ffmpeg_snapshot.jpg")
+SNAPSHOT_FILE = os.path.abspath("openrtsp_snapshot.jpg")
 
 def ptz_control(action):
     pass 
@@ -121,41 +121,6 @@ def analyze_sky_with_gemini(image_path):
         print("Lỗi gọi Gemini:", e)
         return "LỖI AI"
 
-def capture_frame_via_ffmpeg():
-    """Chuyên dụng cho máy chủ Linux: Dùng FFmpeg giả danh VLC để trích xuất ảnh"""
-    print("⏳ Đang dùng FFmpeg trích xuất khung hình...")
-    if os.path.exists(SNAPSHOT_FILE):
-        os.remove(SNAPSHOT_FILE)
-        
-    cmd = [
-        'ffmpeg',
-        '-y',
-        '-user_agent', 'VLC/3.0.18 LibVLC/3.0.18', 
-        '-rtsp_transport', 'tcp',
-        '-timeout', '15000000',                   
-        '-i', RTSP_URL,
-        '-vframes', '1',                           
-        '-q:v', '2',                               
-        SNAPSHOT_FILE
-    ]
-    
-    try:
-        process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25)
-        
-        if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
-            print("🎉 THÀNH CÔNG: Đã trích xuất ảnh từ Camera!")
-            return cv2.imread(SNAPSHOT_FILE)
-        else:
-            print("❌ FFmpeg không thể tạo ảnh. Log lỗi chi tiết:")
-            print(process.stderr.decode('utf-8', errors='ignore'))
-            
-    except subprocess.TimeoutExpired:
-        print("❌ LỖI: Quá thời gian chờ khi trích xuất ảnh.")
-    except Exception as e:
-        print(f"❌ LỖI HỆ THỐNG: {e}")
-        
-    return None
-
 def check_frp_network(rtsp_url, timeout=3):
     """Kiểm tra xem máy chủ GitHub có bị FRP chặn IP không"""
     print("⏳ Đang kiểm tra cổng mạng từ GitHub đến FRP...")
@@ -181,6 +146,53 @@ def check_frp_network(rtsp_url, timeout=3):
         print(f"❌ LỖI MẠNG: Không thể kết nối tới máy chủ Camera ({e})")
         return False
 
+def capture_frame_via_openrtsp():
+    """Dùng openRTSP (Live555 Engine) để kéo luồng RTSP TCP vượt qua lỗi Nonmatching transport"""
+    print("⏳ Đang dùng openRTSP (Live555) trích xuất luồng video qua FRP...")
+    if os.path.exists(SNAPSHOT_FILE):
+        os.remove(SNAPSHOT_FILE)
+        
+    # Dọn dẹp file đệm video cũ
+    for f in os.listdir('.'):
+        if f.startswith('video-'):
+            try:
+                os.remove(f)
+            except:
+                pass
+
+    # Lệnh openRTSP: -t (ép TCP), -d 7 (chạy 7 giây lấy luồng), -b 5000000 (bộ đệm 5MB)
+    cmd_openrtsp = ['openRTSP', '-t', '-d', '7', '-b', '5000000', RTSP_URL]
+    
+    try:
+        subprocess.run(cmd_openrtsp, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
+        
+        # Tìm file video do openRTSP tải về
+        video_files = [f for f in os.listdir('.') if f.startswith('video-')]
+        
+        if video_files:
+            raw_video = video_files[0]
+            # Dùng FFmpeg chuyển file video thô thành 1 bức ảnh JPEG
+            cmd_ffmpeg = ['ffmpeg', '-y', '-i', raw_video, '-vframes', '1', '-q:v', '2', SNAPSHOT_FILE]
+            subprocess.run(cmd_ffmpeg, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+            
+            # Xóa file video thô sau khi chuyển đổi xong
+            for f in video_files:
+                try:
+                    os.remove(f)
+                except:
+                    pass
+
+            if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
+                print("🎉 THÀNH CÔNG: Đã trích xuất ảnh từ Camera!")
+                return cv2.imread(SNAPSHOT_FILE)
+        
+        print("❌ openRTSP không bắt được luồng video nào từ Camera.")
+            
+    except Exception as e:
+        print(f"❌ LỖI HỆ THỐNG Khi chạy openRTSP: {e}")
+        
+    return None
+
 # ==========================================
 # LUỒNG XỬ LÝ TRUNG TÂM
 # ==========================================
@@ -202,7 +214,7 @@ def main():
     alert_level = 1
     alert_msg = "Trời quang mây tạnh."
     
-    frame = capture_frame_via_ffmpeg()
+    frame = capture_frame_via_openrtsp()
     if frame is None:
         print("Không thể trích xuất khung hình từ Camera. Đã xuất JSON dự phòng.")
         return
