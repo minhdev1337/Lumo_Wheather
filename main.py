@@ -12,17 +12,18 @@ from datetime import datetime
 from google import genai
 from google.genai import types
 
+# Ép OpenCV dùng TCP khi mở RTSP ngầm
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|timeout;5000000"
+
 # ==========================================
 # CẤU HÌNH HỆ THỐNG & API KẾT NỐI
 # ==========================================
 RTSP_URL = os.environ.get("RTSP_URL")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Tọa độ chính xác: 10°20'14.4"N 107°04'49.4"E
 VT_LAT = "10.3373"
 VT_LON = "107.0804"
 
-# Chìa khóa của 2 API
 WEATHERAPI_KEY = os.environ.get("WEATHER_API_KEY")
 OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
 
@@ -146,33 +147,51 @@ def check_frp_network(rtsp_url, timeout=3):
         print(f"❌ LỖI MẠNG: Không thể kết nối tới máy chủ Camera ({e})")
         return False
 
-def capture_frame_gstreamer():
-    """Sử dụng GStreamer với bộ lọc decodebin để kéo 1 frame bất chấp chuẩn Camera"""
-    print("⏳ Dùng GStreamer (Chế độ linh hoạt) để kéo ảnh...")
+def capture_frame_diagnostic():
+    """Hàm trích xuất ảnh chẩn đoán: Thử RTSP over HTTP & Native OpenCV"""
     if os.path.exists(SNAPSHOT_FILE):
         os.remove(SNAPSHOT_FILE)
 
-    gst_cmd = [
-        'gst-launch-1.0',
-        'rtspsrc', f'location={RTSP_URL}', 'protocols=tcp', 'latency=2000',
-        '!', 'decodebin',
-        '!', 'videoconvert',
-        '!', 'jpegenc',
-        '!', 'multifilesink', f'location={SNAPSHOT_FILE}', 'max-files=1'
+    # CÁCH 1: FFmpeg với RTSP over HTTP (Khắc phục triệt để lỗi Nonmatching transport)
+    print("⏳ [Cách 1] Kéo ảnh qua FFmpeg (Chế độ RTSP-over-HTTP Tunneling)...")
+    cmd_http = [
+        'ffmpeg', '-y',
+        '-rtsp_transport', 'http',
+        '-timeout', '10000000',
+        '-i', RTSP_URL,
+        '-vframes', '1',
+        '-q:v', '2',
+        SNAPSHOT_FILE
     ]
-    
     try:
-        # Giới hạn 15 giây để phòng hờ nghẽn mạng từ FRP
-        subprocess.run(gst_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
-    except subprocess.TimeoutExpired:
-        # Ép tắt bình thường sau khi hết giờ chờ (luồng đã được ghi thành công 1 frame)
-        pass
-    
-    if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
-        print("🎉 THÀNH CÔNG: Đã trích xuất ảnh từ Camera qua đường hầm!")
-        return cv2.imread(SNAPSHOT_FILE)
-    
-    print("❌ GStreamer thất bại. Camera không phản hồi hoặc luồng hỏng.")
+        res1 = subprocess.run(cmd_http, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
+        if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
+            print("🎉 THÀNH CÔNG: Đã lấy được ảnh qua RTSP-over-HTTP!")
+            return cv2.imread(SNAPSHOT_FILE)
+        else:
+            print("⚠️ Cách 1 thất bại. Log chi tiết:")
+            print(res1.stderr.decode('utf-8', errors='ignore'))
+    except Exception as e:
+        print(f"⚠️ Cách 1 báo lỗi hệ thống: {e}")
+
+    # CÁCH 2: Dùng OpenCV VideoCapture trực tiếp trong Python
+    print("⏳ [Cách 2] Kéo ảnh trực tiếp bằng OpenCV Native Client...")
+    try:
+        cap = cv2.VideoCapture(RTSP_URL, cv2.CAP_FFMPEG)
+        if cap.isOpened():
+            ret, frame = cap.read()
+            cap.release()
+            if ret and frame is not None:
+                print("🎉 THÀNH CÔNG: Đã lấy được ảnh qua OpenCV Native!")
+                cv2.imwrite(SNAPSHOT_FILE, frame)
+                return frame
+            else:
+                print("⚠️ Cách 2: OpenCV không đọc được frame nào.")
+        else:
+            print("⚠️ Cách 2: OpenCV không thể mở luồng Video.")
+    except Exception as e:
+        print(f"⚠️ Cách 2 báo lỗi: {e}")
+
     return None
 
 # ==========================================
@@ -188,7 +207,6 @@ def main():
     with open("data.json", "w", encoding="utf-8") as f:
         json.dump(fallback_data, f, ensure_ascii=False, indent=4)
 
-    # Bắt buộc check mạng trước tiên để tránh treo quy trình GitHub
     if not check_frp_network(RTSP_URL):
         print("Dừng quy trình vì hệ thống mạng bị nghẽn hoặc bị chặn IP.")
         return
@@ -196,10 +214,9 @@ def main():
     alert_level = 1
     alert_msg = "Trời quang mây tạnh."
     
-    # Kéo luồng qua GStreamer
-    frame = capture_frame_gstreamer()
+    frame = capture_frame_diagnostic()
     if frame is None:
-        print("Không thể trích xuất khung hình từ Camera. Đã xuất JSON dự phòng.")
+        print("❌ Không thể trích xuất khung hình từ Camera. Đã xuất JSON dự phòng.")
         return
 
     frame = apply_clahe(cv2.resize(frame, (640, 480)))
