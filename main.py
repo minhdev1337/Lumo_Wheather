@@ -1,4 +1,6 @@
 import os
+import vlc
+import time
 import cv2
 import requests
 import numpy as np
@@ -21,10 +23,11 @@ VT_LAT = "10.3373"
 VT_LON = "107.0804"
 
 # Chìa khóa của 2 API
-WEATHERAPI_KEY = os.environ.get("WEATHERAPI_KEY")
+WEATHERAPI_KEY = os.environ.get("WEATHER_API_KEY") # Hoặc WEATHERAPI_KEY tùy cách bạn đặt trong Secrets
 OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
 
 MOUNTAIN_ROI = (100, 150, 200, 200) 
+SNAPSHOT_FILE = os.path.abspath("vlc_snapshot.jpg")
 
 def send_telegram(message):
     try:
@@ -114,7 +117,6 @@ def analyze_sky_with_gemini(image_path):
     Dựa trên quan sát, hãy chốt 1 cụm từ duy nhất: QUANG ĐÃNG, MÂY BAY NGANG, hoặc SẮP MƯA DÔNG.
     """
     try:
-        # Sử dụng đúng tên model theo tài khoản của bạn
         response = client.models.generate_content(
             model='gemini-3.5-flash-lite',
             contents=[prompt, 
@@ -126,6 +128,36 @@ def analyze_sky_with_gemini(image_path):
         print("Lỗi gọi Gemini:", e)
         return "LỖI AI"
 
+def capture_frame_via_vlc():
+    """Hàm chuyên dụng sử dụng nhân VLC để vượt qua tường lửa TCP/FRP và chụp khung hình"""
+    if os.path.exists(SNAPSHOT_FILE):
+        os.remove(SNAPSHOT_FILE)
+
+    # Thêm --vout=dummy để chạy ẩn không cần màn hình trên Linux (headless)
+    vlc_instance = vlc.Instance("--rtsp-tcp", "--network-caching=3000", "--vout=dummy")
+    player = vlc_instance.media_player_new()
+    media = vlc_instance.media_new(RTSP_URL)
+    player.set_media(media)
+
+    player.play()
+    time.sleep(5) # Chờ đệm luồng mạng qua FRP
+
+    success = False
+    if player.is_playing():
+        for _ in range(5):
+            player.video_take_snapshot(0, SNAPSHOT_FILE, 0, 0)
+            time.sleep(1)
+            if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
+                success = True
+                break
+    
+    player.stop()
+
+    if success:
+        frame = cv2.imread(SNAPSHOT_FILE)
+        return frame
+    return None
+
 # ==========================================
 # LUỒNG XỬ LÝ TRUNG TÂM
 # ==========================================
@@ -133,11 +165,10 @@ def main():
     alert_level = 1
     alert_msg = "Trời quang mây tạnh."
     
-    cap = cv2.VideoCapture(RTSP_URL)
-    ret, frame = cap.read()
-    cap.release()
-    if not ret:
-        print("Không thể kết nối Camera.")
+    # Lấy khung hình qua nhân VLC thay vì cv2.VideoCapture thông thường
+    frame = capture_frame_via_vlc()
+    if frame is None:
+        print("Không thể kết nối hoặc trích xuất khung hình từ Camera qua VLC.")
         return
 
     frame = apply_clahe(cv2.resize(frame, (640, 480)))
