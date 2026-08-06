@@ -2,14 +2,14 @@ name: AI Weather Viễn Thám
 
 on:
   schedule:
-    - cron: '*/10 * * * *' # Tự động kích hoạt mỗi 10 phút
-  workflow_dispatch: # Tạo nút bấm để bạn có thể chạy test thủ công bất cứ lúc nào
+    - cron: '*/10 * * * *'
+  workflow_dispatch: 
 
 jobs:
   analyze-weather:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Cấp quyền để bot có thể ghi file data.json đè lên repo
+      contents: write 
 
     steps:
       - name: Checkout Code
@@ -20,13 +20,13 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Cài đặt thư viện cần thiết và VLC
+      - name: Cài đặt thư viện cần thiết và VLC (Bổ sung Xvfb)
         run: |
           sudo apt-get update
-          sudo apt-get install -y vlc
+          sudo apt-get install -y vlc xvfb
           pip install opencv-python-headless requests numpy google-genai python-vlc
 
-      - name: Chạy Trạm Khí Tượng AI
+      - name: Chạy Trạm Khí Tượng AI (Đánh lừa VLC bằng màn hình ảo)
         env:
           RTSP_URL: ${{ secrets.RTSP_URL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -34,7 +34,8 @@ jobs:
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python main.py
+        # Lệnh xvfb-run -a sẽ khởi động màn hình ảo trước khi chạy code Python
+        run: xvfb-run -a python main.py
 
       - name: Lưu kết quả và Đẩy lên GitHub
         run: |
