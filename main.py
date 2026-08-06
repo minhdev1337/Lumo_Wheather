@@ -126,7 +126,7 @@ def capture_frame_via_vlc():
     if os.path.exists(SNAPSHOT_FILE):
         os.remove(SNAPSHOT_FILE)
 
-    vlc_instance = vlc.Instance("--vout=dummy", "--aout=dummy", "--quiet")
+    vlc_instance = vlc.Instance("--avcodec-hw=none", "--aout=dummy", "--quiet")
     player = vlc_instance.media_player_new()
     media = vlc_instance.media_new(RTSP_URL)
     
