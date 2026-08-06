@@ -133,49 +133,172 @@ def check_frp_network(rtsp_url, timeout=3):
         return False
 
 def capture_frame_definitive():
-    """Hàm trích xuất ảnh tối thượng: Khôi phục cấu hình TCP chuẩn mực và thêm bộ đệm file"""
+    """Trích xuất 1 frame từ RTSP + ghi log FFmpeg đầy đủ"""
+
     if os.path.exists(SNAPSHOT_FILE):
         os.remove(SNAPSHOT_FILE)
 
+    if os.path.exists("video_dump.ts"):
+        os.remove("video_dump.ts")
+
     print("⏳ [Phương án 1] Kéo ảnh trực tiếp qua TCP chuẩn...")
+
     cmd_standard = [
-        'ffmpeg', '-y',
-        '-rtsp_transport', 'tcp',
-        '-allowed_media_types', 'video',  # Bỏ qua kênh âm thanh (thường gây lỗi luồng)
-        '-timeout', '15000000',           # Chờ kết nối 15 giây
-        '-i', RTSP_URL,
-        '-vframes', '1',
-        '-q:v', '2',
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel", "verbose",
+        "-y",
+
+        "-rtsp_transport", "tcp",
+        "-allowed_media_types", "video",
+
+        "-rw_timeout", "30000000",
+        "-analyzeduration", "10000000",
+        "-probesize", "10000000",
+
+        "-i", RTSP_URL,
+
+        "-frames:v", "1",
+        "-q:v", "2",
+
         SNAPSHOT_FILE
     ]
-    subprocess.run(cmd_standard, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
-        print("🎉 THÀNH CÔNG: Đã trích xuất ảnh trực tiếp từ Camera!")
-        return cv2.imread(SNAPSHOT_FILE)
 
-    print("⚠️ Phương án 1 không thành công. Luồng mạng có thể bị rớt gói Keyframe do FRP.")
-    print("⏳ [Phương án 2] Lưu đệm luồng Video 5 giây vào ổ cứng rồi trích xuất sau...")
+    result = subprocess.run(
+        cmd_standard,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+
+    with open("ffmpeg.log", "w", encoding="utf-8") as f:
+        f.write(result.stderr)
+
+    print("========== FFMPEG LOG (PHƯƠNG ÁN 1) ==========")
+    print(result.stderr)
+    print("Return code:", result.returncode)
+
+    if os.path.exists(SNAPSHOT_FILE):
+
+        img = cv2.imread(SNAPSHOT_FILE)
+
+        if img is not None:
+            print("🎉 THÀNH CÔNG: Đã lấy được ảnh trực tiếp.")
+            return img
+
+        print("⚠️ Có file nhưng OpenCV không đọc được.")
+
+    print("⚠️ Phương án 1 thất bại.")
+
+    print("⏳ [Phương án 2] Ghi đệm video 10 giây...")
+
     cmd_dump = [
-        'ffmpeg', '-y',
-        '-rtsp_transport', 'tcp',
-        '-timeout', '15000000',
-        '-i', RTSP_URL,
-        '-t', '5',               # Ghi liên tục 5 giây
-        '-c:v', 'copy',          # Tải luồng RAW, không can thiệp giải mã
-        '-an',
-        'video_dump.ts'
+
+        "ffmpeg",
+
+        "-hide_banner",
+
+        "-loglevel", "verbose",
+
+        "-y",
+
+        "-rtsp_transport", "tcp",
+
+        "-rw_timeout", "30000000",
+
+        "-analyzeduration", "10000000",
+
+        "-probesize", "10000000",
+
+        "-i", RTSP_URL,
+
+        "-t", "10",
+
+        "-c:v", "copy",
+
+        "-an",
+
+        "video_dump.ts"
+
     ]
-    subprocess.run(cmd_dump, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    
-    if os.path.exists('video_dump.ts') and os.path.getsize('video_dump.ts') > 1024:
-        print("✅ Đã tải xong luồng video dự phòng. Đang trích xuất ảnh...")
-        cmd_extract = ['ffmpeg', '-y', '-i', 'video_dump.ts', '-vframes', '1', '-q:v', '2', SNAPSHOT_FILE]
-        subprocess.run(cmd_extract, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
-            print("🎉 THÀNH CÔNG: Đã lấy được ảnh từ file đệm!")
-            return cv2.imread(SNAPSHOT_FILE)
-    
-    print("❌ Cả 2 phương án đều thất bại. Luồng RTSP qua FRP bị hỏng hoàn toàn.")
+
+    result = subprocess.run(
+
+        cmd_dump,
+
+        stdout=subprocess.PIPE,
+
+        stderr=subprocess.PIPE,
+
+        text=True
+
+    )
+
+    with open("ffmpeg_dump.log", "w", encoding="utf-8") as f:
+        f.write(result.stderr)
+
+    print("========== FFMPEG LOG (PHƯƠNG ÁN 2) ==========")
+    print(result.stderr)
+    print("Return code:", result.returncode)
+
+    if os.path.exists("video_dump.ts") and os.path.getsize("video_dump.ts") > 1024:
+
+        print("✅ Đã lưu được luồng video.")
+
+        cmd_extract = [
+
+            "ffmpeg",
+
+            "-hide_banner",
+
+            "-loglevel", "verbose",
+
+            "-y",
+
+            "-fflags", "+genpts",
+
+            "-i", "video_dump.ts",
+
+            "-frames:v", "1",
+
+            "-q:v", "2",
+
+            SNAPSHOT_FILE
+
+        ]
+
+        result = subprocess.run(
+
+            cmd_extract,
+
+            stdout=subprocess.PIPE,
+
+            stderr=subprocess.PIPE,
+
+            text=True
+
+        )
+
+        with open("ffmpeg_extract.log", "w", encoding="utf-8") as f:
+            f.write(result.stderr)
+
+        print("========== FFMPEG LOG (EXTRACT) ==========")
+        print(result.stderr)
+
+        if os.path.exists(SNAPSHOT_FILE):
+
+            img = cv2.imread(SNAPSHOT_FILE)
+
+            if img is not None:
+
+                print("🎉 THÀNH CÔNG: Lấy ảnh từ file đệm.")
+
+                return img
+
+            print("⚠️ File ảnh sinh ra nhưng bị lỗi.")
+
+    print("❌ Cả hai phương án đều thất bại.")
+
     return None
 
 # ==========================================
