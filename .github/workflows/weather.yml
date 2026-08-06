@@ -20,10 +20,10 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Cài đặt thư viện cần thiết và công cụ Xử lý Video
+      - name: Cài đặt gói siêu nhẹ
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg gstreamer1.0-tools gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly
+          sudo apt-get install -y --no-install-recommends ffmpeg
           pip install opencv-python-headless requests numpy google-genai
 
       - name: Chạy Trạm Khí Tượng AI
