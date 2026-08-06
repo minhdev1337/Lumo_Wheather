@@ -20,10 +20,10 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Cài đặt gói siêu nhẹ
+      - name: Cài đặt thư viện cần thiết
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          sudo apt-get install -y vlc ffmpeg
           pip install opencv-python-headless requests numpy google-genai
 
       - name: Chạy Trạm Khí Tượng AI
