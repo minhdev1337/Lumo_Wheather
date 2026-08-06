@@ -20,15 +20,18 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Cài đặt thư viện cần thiết
+      - name: Cài đặt thư viện cần thiết và VLC
         run: |
-          pip install opencv-python-headless requests numpy google-genai
+          sudo apt-get update
+          sudo apt-get install -y vlc
+          pip install opencv-python-headless requests numpy google-genai python-vlc
 
       - name: Chạy Trạm Khí Tượng AI
         env:
           RTSP_URL: ${{ secrets.RTSP_URL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           WEATHER_API_KEY: ${{ secrets.WEATHER_API_KEY }}
+          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
@@ -38,6 +41,5 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add data.json
-          # Dùng [skip ci] để tránh việc push code làm trigger chạy lặp vô tận
           git commit -m "Cập nhật dữ liệu thời tiết mới nhất [skip ci]" || echo "Không có thay đổi dữ liệu"
           git push
