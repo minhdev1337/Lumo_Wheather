@@ -1,5 +1,4 @@
 import os
-import vlc
 import time
 import cv2
 import requests
@@ -7,6 +6,7 @@ import numpy as np
 import json
 import base64
 import socket
+import subprocess
 from urllib.parse import urlparse
 from datetime import datetime
 from google import genai
@@ -27,7 +27,7 @@ WEATHERAPI_KEY = os.environ.get("WEATHER_API_KEY")
 OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
 
 MOUNTAIN_ROI = (100, 150, 200, 200) 
-SNAPSHOT_FILE = os.path.abspath("vlc_snapshot.jpg")
+SNAPSHOT_FILE = os.path.abspath("ffmpeg_snapshot.jpg")
 
 def ptz_control(action):
     pass 
@@ -121,37 +121,39 @@ def analyze_sky_with_gemini(image_path):
         print("Lỗi gọi Gemini:", e)
         return "LỖI AI"
 
-def capture_frame_via_vlc():
-    """Hàm chuyên dụng sử dụng nhân VLC để vượt qua tường lửa TCP/FRP và chụp khung hình"""
+def capture_frame_via_ffmpeg():
+    """Chuyên dụng cho máy chủ Linux: Dùng FFmpeg giả danh VLC để trích xuất ảnh"""
+    print("⏳ Đang dùng FFmpeg trích xuất khung hình...")
     if os.path.exists(SNAPSHOT_FILE):
         os.remove(SNAPSHOT_FILE)
-
-    vlc_instance = vlc.Instance("--avcodec-hw=none", "--aout=dummy", "--quiet")
-    player = vlc_instance.media_player_new()
-    media = vlc_instance.media_new(RTSP_URL)
+        
+    cmd = [
+        'ffmpeg',
+        '-y',
+        '-user_agent', 'VLC/3.0.18 LibVLC/3.0.18', 
+        '-rtsp_transport', 'tcp',
+        '-stimeout', '15000000',                   
+        '-i', RTSP_URL,
+        '-vframes', '1',                           
+        '-q:v', '2',                               
+        SNAPSHOT_FILE
+    ]
     
-    media.add_option(":rtsp-tcp")
-    media.add_option(":network-caching=5000")
-    media.add_option(":no-audio")             
-    
-    player.set_media(media)
-    player.play()
-    time.sleep(8) 
-
-    success = False
-    if player.is_playing():
-        for _ in range(5):
-            player.video_take_snapshot(0, SNAPSHOT_FILE, 0, 0)
-            time.sleep(1.5)
-            if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
-                success = True
-                break
-    
-    player.stop()
-
-    if success:
-        frame = cv2.imread(SNAPSHOT_FILE)
-        return frame
+    try:
+        process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=25)
+        
+        if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
+            print("🎉 THÀNH CÔNG: Đã trích xuất ảnh từ Camera!")
+            return cv2.imread(SNAPSHOT_FILE)
+        else:
+            print("❌ FFmpeg không thể tạo ảnh. Log lỗi chi tiết:")
+            print(process.stderr.decode('utf-8', errors='ignore'))
+            
+    except subprocess.TimeoutExpired:
+        print("❌ LỖI: Quá thời gian chờ khi trích xuất ảnh.")
+    except Exception as e:
+        print(f"❌ LỖI HỆ THỐNG: {e}")
+        
     return None
 
 def check_frp_network(rtsp_url, timeout=3):
@@ -200,9 +202,9 @@ def main():
     alert_level = 1
     alert_msg = "Trời quang mây tạnh."
     
-    frame = capture_frame_via_vlc()
+    frame = capture_frame_via_ffmpeg()
     if frame is None:
-        print("Không thể trích xuất khung hình từ Camera qua VLC. Đã xuất JSON dự phòng.")
+        print("Không thể trích xuất khung hình từ Camera. Đã xuất JSON dự phòng.")
         return
 
     frame = apply_clahe(cv2.resize(frame, (640, 480)))
