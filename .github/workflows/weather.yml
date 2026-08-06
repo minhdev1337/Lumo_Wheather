@@ -20,13 +20,13 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Cài đặt thư viện cần thiết và VLC (Bổ sung Xvfb)
+      - name: Cài đặt thư viện cần thiết và FFmpeg
         run: |
           sudo apt-get update
-          sudo apt-get install -y vlc xvfb
-          pip install opencv-python-headless requests numpy google-genai python-vlc
+          sudo apt-get install -y ffmpeg
+          pip install opencv-python-headless requests numpy google-genai
 
-      - name: Chạy Trạm Khí Tượng AI (Đánh lừa VLC bằng màn hình ảo)
+      - name: Chạy Trạm Khí Tượng AI
         env:
           RTSP_URL: ${{ secrets.RTSP_URL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -34,8 +34,7 @@ jobs:
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        # Lệnh xvfb-run -a sẽ khởi động màn hình ảo trước khi chạy code Python
-        run: xvfb-run -a python main.py
+        run: python main.py
 
       - name: Lưu kết quả và Đẩy lên GitHub
         run: |
