@@ -20,14 +20,13 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Cài đặt thư viện và Tự biên dịch openRTSP
+      - name: Cài đặt thư viện và Tự biên dịch openRTSP từ GitHub Mirror
         run: |
           sudo apt-get update
-          # Cài đặt môi trường biên dịch C++ và FFmpeg
-          sudo apt-get install -y build-essential libssl-dev ffmpeg
-          # Tải mã nguồn Live555 và tự biên dịch ra openRTSP
-          wget http://www.live555.com/liveMedia/public/live555-latest.tar.gz
-          tar -xzf live555-latest.tar.gz
+          # Cài đặt môi trường biên dịch và FFmpeg
+          sudo apt-get install -y build-essential libssl-dev ffmpeg git
+          # Clone mã nguồn từ GitHub Mirror để né lỗi 404 Not Found
+          git clone https://github.com/rgaufko/live555.git live
           cd live
           ./genMakefiles linux
           make -j4
