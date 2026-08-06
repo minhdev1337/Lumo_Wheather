@@ -146,50 +146,33 @@ def check_frp_network(rtsp_url, timeout=3):
         print(f"❌ LỖI MẠNG: Không thể kết nối tới máy chủ Camera ({e})")
         return False
 
-def capture_frame_vlc_dump():
-    """Sử dụng nhân Live555 của VLC tải luồng thô về máy để né kiểm duyệt Transport của FFmpeg"""
-    print("⏳ Dùng VLC (Live555) tải 10 giây luồng thô từ Camera...")
-    
-    # Xóa file cũ nếu có
-    if os.path.exists("dump.ts"): os.remove("dump.ts")
-    if os.path.exists(SNAPSHOT_FILE): os.remove(SNAPSHOT_FILE)
+def capture_frame_gstreamer():
+    """Sử dụng GStreamer với bộ lọc decodebin để kéo 1 frame bất chấp chuẩn Camera"""
+    print("⏳ Dùng GStreamer (Chế độ linh hoạt) để kéo ảnh...")
+    if os.path.exists(SNAPSHOT_FILE):
+        os.remove(SNAPSHOT_FILE)
 
-    vlc_cmd = [
-        'vlc',
-        '-I', 'dummy',                # Chạy ngầm hoàn toàn
-        '--quiet',                    # Tắt log cảnh báo rác
-        '--no-audio',                 # Tắt Audio tránh lỗi PulseAudio
-        '--sout=file/ts:dump.ts',     # ÉP LƯU RA FILE THAY VÌ XUẤT HÌNH
-        '--run-time=10',              # Ghi đúng 10 giây rồi dừng
-        RTSP_URL,                     # BẮT BUỘC ĐẶT URL TRƯỚC CÁC CỜ DẤU (:)
-        ':rtsp-tcp',                  # ĐÃ SỬA: Đổi -- thành : để áp dụng riêng cho luồng RTSP này
-        ':network-caching=3000',      # ĐÃ SỬA: Bù độ trễ mạng FRP
-        'vlc://quit'                  # Dừng xong tự thoát chương trình
+    gst_cmd = [
+        'gst-launch-1.0',
+        'rtspsrc', f'location={RTSP_URL}', 'protocols=tcp', 'latency=2000',
+        '!', 'decodebin',
+        '!', 'videoconvert',
+        '!', 'jpegenc',
+        '!', 'multifilesink', f'location={SNAPSHOT_FILE}', 'max-files=1'
     ]
-
+    
     try:
-        # Cấp 25 giây cho toàn bộ tiến trình tải (bù trừ hao mạng)
-        subprocess.run(vlc_cmd, timeout=25)
+        # Giới hạn 15 giây để phòng hờ nghẽn mạng từ FRP
+        subprocess.run(gst_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
     except subprocess.TimeoutExpired:
-        print("⏳ VLC đã tải đủ dữ liệu và bị ép thoát do chạm mốc thời gian.")
-    except Exception as e:
-        print(f"❌ Lỗi chạy VLC: {e}")
-
-    # Bước Trích Xuất File Cục Bộ (Bằng OpenCV thay vì bắt luồng trực tiếp)
-    if os.path.exists("dump.ts") and os.path.getsize("dump.ts") > 1024:
-        print("🎉 Đã lưu thành công video gốc. Bắt đầu trích xuất khung hình...")
-        cap = cv2.VideoCapture("dump.ts")
-        ret, frame = cap.read()
-        cap.release()
-        
-        if ret and frame is not None:
-            cv2.imwrite(SNAPSHOT_FILE, frame)
-            return frame
-        else:
-            print("❌ File dump.ts được tải về nhưng không chứa khung hình video.")
-    else:
-        print("❌ Quá trình tải luồng video thất bại. Không có file nào được lưu.")
-        
+        # Ép tắt bình thường sau khi hết giờ chờ (luồng đã được ghi thành công 1 frame)
+        pass
+    
+    if os.path.exists(SNAPSHOT_FILE) and os.path.getsize(SNAPSHOT_FILE) > 0:
+        print("🎉 THÀNH CÔNG: Đã trích xuất ảnh từ Camera qua đường hầm!")
+        return cv2.imread(SNAPSHOT_FILE)
+    
+    print("❌ GStreamer thất bại. Camera không phản hồi hoặc luồng hỏng.")
     return None
 
 # ==========================================
@@ -213,8 +196,8 @@ def main():
     alert_level = 1
     alert_msg = "Trời quang mây tạnh."
     
-    # Kéo luồng qua VLC File Dump
-    frame = capture_frame_vlc_dump()
+    # Kéo luồng qua GStreamer
+    frame = capture_frame_gstreamer()
     if frame is None:
         print("Không thể trích xuất khung hình từ Camera. Đã xuất JSON dự phòng.")
         return
