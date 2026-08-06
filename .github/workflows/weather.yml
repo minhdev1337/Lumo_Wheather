@@ -23,7 +23,7 @@ jobs:
       - name: Cài đặt thư viện cần thiết, openRTSP và FFmpeg
         run: |
           sudo apt-get update
-          sudo apt-get install -y live-media-utils ffmpeg
+          sudo apt-get install -y livemedia-utils ffmpeg
           pip install opencv-python-headless requests numpy google-genai
 
       - name: Chạy Trạm Khí Tượng AI
