@@ -146,11 +146,11 @@ def capture_frame_definitive():
     cmd_standard = [
         "ffmpeg",
         "-hide_banner",
-        "-loglevel", "verbose",
+        "-loglevel", "debug", 
         "-y",
 
         "-rtsp_transport", "tcp",
-        "-allowed_media_types", "video",
+        "-rtsp_flags", "prefer_tcp", 
 
         "-rw_timeout", "30000000",
         "-analyzeduration", "10000000",
@@ -193,21 +193,16 @@ def capture_frame_definitive():
     print("⏳ [Phương án 2] Ghi đệm video 10 giây...")
 
     cmd_dump = [
-
         "ffmpeg",
-
         "-hide_banner",
-
-        "-loglevel", "verbose",
-
+        "-loglevel", "debug", 
         "-y",
 
         "-rtsp_transport", "tcp",
+        "-rtsp_flags", "prefer_tcp", 
 
         "-rw_timeout", "30000000",
-
         "-analyzeduration", "10000000",
-
         "-probesize", "10000000",
 
         "-i", RTSP_URL,
@@ -219,19 +214,13 @@ def capture_frame_definitive():
         "-an",
 
         "video_dump.ts"
-
     ]
 
     result = subprocess.run(
-
         cmd_dump,
-
         stdout=subprocess.PIPE,
-
         stderr=subprocess.PIPE,
-
         text=True
-
     )
 
     with open("ffmpeg_dump.log", "w", encoding="utf-8") as f:
@@ -246,13 +235,9 @@ def capture_frame_definitive():
         print("✅ Đã lưu được luồng video.")
 
         cmd_extract = [
-
             "ffmpeg",
-
             "-hide_banner",
-
-            "-loglevel", "verbose",
-
+            "-loglevel", "debug", 
             "-y",
 
             "-fflags", "+genpts",
@@ -264,19 +249,13 @@ def capture_frame_definitive():
             "-q:v", "2",
 
             SNAPSHOT_FILE
-
         ]
 
         result = subprocess.run(
-
             cmd_extract,
-
             stdout=subprocess.PIPE,
-
             stderr=subprocess.PIPE,
-
             text=True
-
         )
 
         with open("ffmpeg_extract.log", "w", encoding="utf-8") as f:
@@ -301,6 +280,27 @@ def capture_frame_definitive():
 
     return None
 
+def run_ffprobe():
+    """Chạy lệnh ffprobe theo yêu cầu để lấy log chi tiết của server"""
+    print("⏳ Đang chạy ffprobe để kiểm tra RTSP Header...")
+    cmd_ffprobe = [
+        "ffprobe",
+        "-v", "debug",
+        "-rtsp_transport", "tcp",
+        RTSP_URL
+    ]
+    
+    result = subprocess.run(
+        cmd_ffprobe,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+    
+    print("========== FFPROBE LOG ==========")
+    print(result.stderr)
+    print("=================================")
+
 # ==========================================
 # LUỒNG XỬ LÝ TRUNG TÂM
 # ==========================================
@@ -316,6 +316,9 @@ def main():
 
     if not check_frp_network(RTSP_URL):
         return
+        
+    # Chạy ffprobe trước để lấy log ngay cả khi ffmpeg bị lỗi
+    run_ffprobe()
 
     alert_level = 1
     alert_msg = "Trời quang mây tạnh."
