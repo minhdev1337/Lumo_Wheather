@@ -20,10 +20,21 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Cài đặt thư viện cần thiết, openRTSP và FFmpeg
+      - name: Cài đặt thư viện và Tự biên dịch openRTSP
         run: |
           sudo apt-get update
-          sudo apt-get install -y livemedia-utils ffmpeg
+          # Cài đặt môi trường biên dịch C++ và FFmpeg
+          sudo apt-get install -y build-essential libssl-dev ffmpeg
+          # Tải mã nguồn Live555 và tự biên dịch ra openRTSP
+          wget http://www.live555.com/liveMedia/public/live555-latest.tar.gz
+          tar -xzf live555-latest.tar.gz
+          cd live
+          ./genMakefiles linux
+          make -j4
+          # Chép file thực thi vào hệ thống
+          sudo cp testProgs/openRTSP /usr/local/bin/
+          cd ..
+          # Cài đặt các thư viện Python
           pip install opencv-python-headless requests numpy google-genai
 
       - name: Chạy Trạm Khí Tượng AI
