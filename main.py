@@ -134,7 +134,7 @@ def capture_frame_via_vlc():
         os.remove(SNAPSHOT_FILE)
 
     # Thêm --vout=dummy để chạy ẩn không cần màn hình trên Linux (headless)
-    vlc_instance = vlc.Instance("--rtsp-transport=tcp", "--network-caching=3000", "--vout=dummy")
+    vlc_instance = vlc.Instance(":--rtsp-transport=tcp", ":--network-caching=3000", ":--vout=dummy")
     player = vlc_instance.media_player_new()
     media = vlc_instance.media_new(RTSP_URL)
     player.set_media(media)
